@@ -51,11 +51,8 @@ activate (GtkApplication* app,
   window = gtk_application_window_new (app);
   gtk_window_set_title (GTK_WINDOW (window), "Window");
 
-  button_box = gtk_button_box_new (GTK_ORIENTATION_HORIZONTAL);
-  gtk_container_add (GTK_CONTAINER (window), button_box);
-
   image = gtk_image_new ();
-  gtk_container_add (GTK_CONTAINER (button_box), image);
+  gtk_container_add (GTK_CONTAINER (window), image);
 
   gtk_widget_show_all (window);
 }
