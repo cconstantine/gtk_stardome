@@ -16,19 +16,11 @@ class LedMatrix
 public:
     virtual ~LedMatrix()  {}
 
-    void addStrip(Point start, Point end, unsigned int length);
-    void drawGrabRegion(int width, int height);
+    void add_strip(Point start, Point end, unsigned int length);
 
 
-private:
     // Hold the Position of our Capture points
-    std::vector <Point> pos;
-
-    // Variables
-    unsigned int size;
-    Point _start;
-    Point _end;
-
+    std::vector <Point> leds;
 };
 
 
