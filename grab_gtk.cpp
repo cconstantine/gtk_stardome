@@ -45,8 +45,8 @@ activate (GtkApplication* app,
   screen  = gdk_display_get_default_screen(display);
   pointer = gdk_device_manager_get_client_pointer(gdk_display_get_device_manager(display) );
 
-  width  = gdk_screen_get_width(screen) / 8 ;
-  height = gdk_screen_get_height(screen) / 8;
+  width  = 800;
+  height = 480;
 
   window = gtk_application_window_new (app);
   gtk_window_set_title (GTK_WINDOW (window), "Window");
