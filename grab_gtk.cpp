@@ -62,6 +62,7 @@ draw_leds(GtkWidget *widget, cairo_t *cr, gpointer data)
   guchar* pixels = gdk_pixbuf_get_pixels (gpb);
   int pixel_width = 4/scale;
 
+  cairo_set_operator(cr, CAIRO_OPERATOR_LIGHTEN);
   for (std::vector<Point>::iterator it = matrix.leds.begin() ; it != matrix.leds.end(); ++it) {
     Point led = *it;
     guchar* pixel = pixels + led.y * rowstride + led.x * channels;
