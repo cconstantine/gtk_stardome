@@ -12,7 +12,6 @@ GdkPixbuf *gpb = NULL;
 gint width;
 gint height;
 LedMatrix matrix;
-GdkPixbuf *mask;
 
 gboolean update_image(gpointer data)
 {
@@ -20,61 +19,37 @@ gboolean update_image(gpointer data)
 
   gdk_device_get_position(pointer, &screen, &x, &y);
 
+  if (gpb) {
+    g_object_unref (gpb);
+  }
 
-  GdkPixbuf *gpb = gdk_pixbuf_get_from_window(gdk_get_default_root_window(),x-width/2, y-height/2, width, height);
+  gpb = gdk_pixbuf_get_from_window(gdk_get_default_root_window(),x-width/2, y-height/2, width, height);
 
-  int channels = gdk_pixbuf_get_n_channels(gpb);
-  int rowstride = gdk_pixbuf_get_rowstride(gpb);
-  guchar* pixels = gdk_pixbuf_get_pixels (gpb);
-
-  //printf("hi, r: %d, g: %d, b: %d\n", pixels[0], pixels[1], pixels[2]);
-  gdk_pixbuf_composite (mask,
-                        gpb,
-                        0,
-                        0,
-                        width,
-                        height,
-                        0,
-                        0,
-                        1,
-                        1,
-                        GDK_INTERP_NEAREST,
-                        255);
-  GdkPixbuf *toDraw = gdk_pixbuf_scale_simple(gpb, width / 4, height / 4, GDK_INTERP_NEAREST );
-  g_object_unref (gpb);
-
-  gtk_image_set_from_pixbuf((GtkImage*)image, toDraw);
   gtk_widget_queue_draw(image);
-
-  g_object_unref (toDraw);
-
 
   return true;
 }
 
-GdkPixbuf* ledmask_new(int width, int height) {
-  cairo_surface_t *surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, width, height);
-  cairo_t *cr = cairo_create(surface);
-  //gdk_cairo_set_source_pixbuf(cr, buf, 0, 0);
+gboolean
+draw_leds(GtkWidget *widget, cairo_t *cr, gpointer data)
+{
+  if (gpb == NULL) {
+    return false;
+  }
+  int channels = gdk_pixbuf_get_n_channels(gpb);
+  int rowstride = gdk_pixbuf_get_rowstride(gpb);
+  guchar* pixels = gdk_pixbuf_get_pixels (gpb);
+  int pixel_width = 4;
 
-
-  cairo_set_source_rgba (cr, 0, 0, 0, 0.9);
-  cairo_rectangle(cr, 0, 0, width, height);
-  cairo_fill(cr);
-
-  int pixel_width = 3;
-  cairo_set_operator(cr, CAIRO_OPERATOR_CLEAR);
   for (std::vector<Point>::iterator it = matrix.leds.begin() ; it != matrix.leds.end(); ++it) {
     Point led = *it;
-
-    cairo_set_source_rgba (cr, 0, 0, 0, 0.0);
+    guchar* pixel = pixels + led.y * rowstride + led.x * channels;
+    cairo_set_source_rgb (cr, float(pixel[0]) / 255, float(pixel[1]) / 255, float(pixel[2]) / 255);
     cairo_rectangle(cr, led.x-pixel_width/2, led.y-pixel_width/2, pixel_width, pixel_width);
     cairo_fill(cr);
   }
-  cairo_destroy(cr);
 
-  return gdk_pixbuf_get_from_surface (surface,0, 0, width, height);
-
+  return false;
 }
 
 static void
@@ -93,13 +68,16 @@ activate (GtkApplication* app,
 
   window = gtk_application_window_new (app);
   gtk_window_set_title (GTK_WINDOW (window), "Window");
-  gtk_window_set_default_size(GTK_WINDOW(window), width/4, height/4);
+  gtk_window_set_default_size(GTK_WINDOW(window), width, height);
   GdkRGBA black = {.0, .0, .0, 1.0};
   gtk_widget_override_background_color(window, GTK_STATE_FLAG_NORMAL, &black);
-  
-  image = gtk_image_new ();
-  gtk_container_add (GTK_CONTAINER (window), image);
+  //gtk_widget_override_background_color(window, GTK_STATE_FLAG_NORMAL, GdkRGBA(0.0,0.0,0.0,0.0));
 
+
+  image = gtk_drawing_area_new ();
+  g_signal_connect (image, "draw", G_CALLBACK (draw_leds), NULL);
+
+  gtk_container_add (GTK_CONTAINER (window), image);
   int x = width / 2;
   int y = height / 2;
 
@@ -143,8 +121,6 @@ activate (GtkApplication* app,
   matrix.add_strip(pos_5, pos_1, 82);
   matrix.add_strip(pos_5, pos_9, 84);
   matrix.add_strip(pos_5, pos_A, 84);
-  
-  mask = ledmask_new(width, height);
 
   gtk_widget_show_all (window);
 }
