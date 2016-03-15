@@ -3,12 +3,31 @@
 #include "LedMatrix.h"
 #include "opc_client.h"
 
+#include "bcm_host.h"
+
+#ifndef ALIGN_TO_16
+#define ALIGN_TO_16(x)  ((x + 15) & ~15)
+#endif
+
 GdkDisplay *display;
 GdkScreen  *screen;
 GdkDevice *pointer;
 
 GtkWidget *image;
 GdkPixbuf *gpb = NULL;
+
+
+#define DEFAULT_DELAY 0
+#define DEFAULT_DISPLAY_NUMBER 0
+
+uint32_t displayNumber = DEFAULT_DISPLAY_NUMBER;
+VC_IMAGE_TYPE_T imageType = VC_IMAGE_RGBA32;
+int8_t dmxBytesPerPixel  = 4;
+DISPMANX_DISPLAY_HANDLE_T displayHandle;
+DISPMANX_MODEINFO_T modeInfo;
+DISPMANX_RESOURCE_HANDLE_T resourceHandle;
+void *dmxImagePtr;
+int32_t dmxPitch;
 
 gint width;
 gint height;
@@ -19,16 +38,53 @@ OPCClient opc_client;
 void send_leds();
 gboolean update_image(gpointer data)
 {
+  //fprintf(stderr, "update_image\n");
   gint x, y;
 
   gdk_device_get_position(pointer, &screen, &x, &y);
 
-  if (gpb) {
-    g_object_unref (gpb);
-  }
+   int  result = vc_dispmanx_snapshot(displayHandle,
+                                  resourceHandle,
+                                  DISPMANX_NO_ROTATE);
+   if (result != 0)
+    {
+        vc_dispmanx_resource_delete(resourceHandle);
+        vc_dispmanx_display_close(displayHandle);
 
-  gpb = gdk_pixbuf_get_from_window(gdk_get_default_root_window(),x-width/2, y-height/2, width, height);
+        fprintf(stderr,
+                "vc_dispmanx_snapshot() failed\n");
+        exit(EXIT_FAILURE);
+    }
+
+    VC_RECT_T rect;
+    result = vc_dispmanx_rect_set(&rect, 0, 0, width, height);
+
+    if (result != 0)
+    {
+        vc_dispmanx_resource_delete(resourceHandle);
+        vc_dispmanx_display_close(displayHandle);
+
+        fprintf(stderr,
+                "vc_dispmanx_resource_read_data() failed\n");
+        exit(EXIT_FAILURE);
+    }
+
+    result = vc_dispmanx_resource_read_data(resourceHandle,
+                                            &rect,
+                                            dmxImagePtr,
+                                            dmxPitch);
+
   
+    if (result != 0)
+    {
+        vc_dispmanx_resource_delete(resourceHandle);
+        vc_dispmanx_display_close(displayHandle);
+
+        fprintf(stderr,
+                "vc_dispmanx_resource_read_data() failed\n");
+
+        exit(EXIT_FAILURE);
+    }
   send_leds();
   gtk_widget_queue_draw(image);
 
@@ -36,14 +92,12 @@ gboolean update_image(gpointer data)
 }
 
 void send_leds() {
-  int channels = gdk_pixbuf_get_n_channels(gpb);
-  int rowstride = gdk_pixbuf_get_rowstride(gpb);
-  guchar* pixels = gdk_pixbuf_get_pixels (gpb);
-
+  //fprintf(stderr, "send_leds\n");
   std::vector<uint8_t> data(matrix.leds.size() * 3, 0);
   for (std::vector<Point>::iterator it = matrix.leds.begin() ; it != matrix.leds.end(); ++it) {
     Point led = *it;
-    guchar* pixel = pixels + led.y * rowstride + led.x * channels;
+    guchar* pixel = (guchar*)dmxImagePtr + led.y * width * dmxBytesPerPixel + led.x * dmxBytesPerPixel;
+    
     data.push_back(pixel[0]);
     data.push_back(pixel[1]);
     data.push_back(pixel[2]);
@@ -54,18 +108,14 @@ void send_leds() {
 gboolean
 draw_leds(GtkWidget *widget, cairo_t *cr, gpointer data)
 {
-  if (gpb == NULL) {
-    return false;
-  }
-  int channels = gdk_pixbuf_get_n_channels(gpb);
-  int rowstride = gdk_pixbuf_get_rowstride(gpb);
-  guchar* pixels = gdk_pixbuf_get_pixels (gpb);
+  //fprintf(stderr, "draw_leds\n");
   int pixel_width = 4/scale;
 
   cairo_set_operator(cr, CAIRO_OPERATOR_LIGHTEN);
   for (std::vector<Point>::iterator it = matrix.leds.begin() ; it != matrix.leds.end(); ++it) {
     Point led = *it;
-    guchar* pixel = pixels + led.y * rowstride + led.x * channels;
+    guchar* pixel = (guchar*)dmxImagePtr + led.y * width * dmxBytesPerPixel + led.x * dmxBytesPerPixel;
+
     cairo_set_source_rgb (cr, float(pixel[0]) / 255, float(pixel[1]) / 255, float(pixel[2]) / 255);
     cairo_rectangle(cr, led.x/scale-pixel_width/2, led.y/scale-pixel_width/2, pixel_width, pixel_width);
     cairo_fill(cr);
@@ -98,8 +148,43 @@ activate (GtkApplication* app,
 
   image = gtk_drawing_area_new ();
   g_signal_connect (image, "draw", G_CALLBACK (draw_leds), NULL);
-
   gtk_container_add (GTK_CONTAINER (window), image);
+
+  bcm_host_init();
+  displayHandle = vc_dispmanx_display_open(displayNumber);
+   if (displayHandle == 0)
+    {
+        fprintf(stderr,
+                "unable to open display %d\n",
+                displayNumber);
+
+        exit(EXIT_FAILURE);
+    }
+    int result = vc_dispmanx_display_get_info(displayHandle, &modeInfo);
+
+    if (result != 0)
+    {
+        fprintf(stderr, "unable to get display information\n");
+
+        exit(EXIT_FAILURE);
+    }
+    printf("modeInfo.width: %d, modeInfo.height: %d\n", modeInfo.width, modeInfo.height);
+    dmxPitch = dmxBytesPerPixel * ALIGN_TO_16(width);
+
+    dmxImagePtr = malloc(dmxPitch * height);
+    if (dmxImagePtr == NULL)
+    {
+        exit(EXIT_FAILURE);
+    }
+
+    //-------------------------------------------------------------------
+    uint32_t vcImagePtr = 0;
+
+    resourceHandle = vc_dispmanx_resource_create(imageType,
+                                                 width,
+                                                 height,
+                                                 &vcImagePtr);
+
   int x = width / 2;
   int y = height / 2;
 
